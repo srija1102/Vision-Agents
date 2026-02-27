@@ -60,6 +60,7 @@ from ..tts.events import TTSAudioEvent
 from ..tts.tts import TTS
 from ..turn_detection import TurnDetector, TurnEndedEvent, TurnStartedEvent
 from ..utils.audio_filter import AudioFilter, FirstSpeakerWinsFilter
+from ..warmup import Warmable
 from ..utils.audio_queue import AudioQueue
 from ..utils.logging import (
     CallContextToken,
@@ -643,6 +644,10 @@ class Agent:
 
             # run start on all subclasses
             await self._apply("start")
+
+            # Warmup audio filter (not covered by _apply since it's an internal component)
+            if isinstance(self._multi_speaker_filter, Warmable):
+                await self._multi_speaker_filter.warmup()
 
             await self.create_user()
 

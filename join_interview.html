@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Interview Room — interview-001</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0f0f0f; color: #fff; font-family: system-ui, sans-serif;
+           display: flex; flex-direction: column; align-items: center;
+           justify-content: center; min-height: 100vh; gap: 20px; padding: 20px; }
+    h1 { font-size: 1.1rem; color: #aaa; }
+    #videos { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
+    .tile { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+    video { width: 400px; height: 270px; background: #111; border-radius: 10px;
+            border: 1px solid #2a2a2a; object-fit: cover; }
+    audio { display: none; }
+    .tile label { font-size: 0.75rem; color: #666; }
+    #controls { display: flex; gap: 10px; }
+    button { padding: 10px 28px; border: none; border-radius: 6px;
+             font-size: 0.9rem; cursor: pointer; font-weight: 600; }
+    #btn-join  { background: #2563eb; color: #fff; }
+    #btn-join:disabled { opacity: 0.5; cursor: default; }
+    #btn-leave { background: #dc2626; color: #fff; display: none; }
+    #status { font-size: 0.8rem; color: #888; max-width: 520px; text-align: center; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <h1>Interview Room · interview-001</h1>
+
+  <div id="videos">
+    <div class="tile">
+      <video id="local-video" autoplay muted playsinline></video>
+      <label>You (Candidate)</label>
+    </div>
+    <div class="tile">
+      <video id="remote-video" autoplay playsinline></video>
+      <label>AI Interviewer (audio only — black is normal)</label>
+    </div>
+  </div>
+
+  <!-- audio elements added dynamically -->
+  <div id="audio-container"></div>
+
+  <div id="controls">
+    <button id="btn-join">Join Call</button>
+    <button id="btn-leave">Leave</button>
+  </div>
+  <p id="status">Click "Join Call" to enter the interview room.</p>
+
+  <script type="module">
+    import { StreamVideoClient } from 'https://esm.sh/@stream-io/video-client@1?bundle';
+
+    const API_KEY = 'drxxdw9yem4v';
+    const USER    = { id: 'candidate', name: 'Candidate' };
+    const TOKEN   = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3NzIwNzczOTksInVzZXJfaWQiOiJjYW5kaWRhdGUiLCJleHAiOjM1NDQxNTg0MDh9.viI7sUNf199dhJw6jSZJXznm9jhK02OvZXH9jIn2gls';
+    const CALL_ID = 'interview-001';
+
+    const status         = document.getElementById('status');
+    const btnJoin        = document.getElementById('btn-join');
+    const btnLeave       = document.getElementById('btn-leave');
+    const localVid       = document.getElementById('local-video');
+    const remoteVid      = document.getElementById('remote-video');
+    const audioContainer = document.getElementById('audio-container');
+
+    let client, call;
+    let audioCtx = null;
+    const audioEls = {};
+
+    function attachAudio(userId, stream) {
+      if (!audioEls[userId]) {
+        const el = document.createElement('audio');
+        el.autoplay = true;
+        audioContainer.appendChild(el);
+        audioEls[userId] = el;
+      }
+      const el = audioEls[userId];
+      if (el.srcObject !== stream) {
+        el.srcObject = stream;
+        // Route through AudioContext so autoplay policy is satisfied
+        if (audioCtx) {
+          const src = audioCtx.createMediaStreamSource(stream);
+          src.connect(audioCtx.destination);
+        }
+        el.play().catch(() => {});
+      }
+    }
+
+    btnJoin.addEventListener('click', async () => {
+      // Unlock audio context SYNCHRONOUSLY on the user click (before any await)
+      // This is the only reliable cross-browser way to bypass autoplay restrictions.
+      audioCtx = new AudioContext();
+      audioCtx.resume();
+
+      btnJoin.disabled = true;
+      status.textContent = 'Connecting…';
+
+      try {
+        client = new StreamVideoClient({ apiKey: API_KEY, user: USER, token: TOKEN });
+        call   = client.call('default', CALL_ID);
+
+        // Watch all participants for streams
+        call.state.participants$.subscribe(participants => {
+          for (const p of participants) {
+            // Local participant → show in left tile
+            if (p.isLocalParticipant && p.videoStream) {
+              if (localVid.srcObject !== p.videoStream) localVid.srcObject = p.videoStream;
+            }
+            // Remote participants → audio + optional video
+            if (!p.isLocalParticipant) {
+              if (p.audioStream) attachAudio(p.userId, p.audioStream);
+              if (p.videoStream && remoteVid.srcObject !== p.videoStream) {
+                remoteVid.srcObject = p.videoStream;
+              }
+            }
+          }
+        });
+
+        // Join the call
+        await call.join({ create: false });
+
+        // Enable mic — agent needs your audio; camera optional
+        try { await call.microphone.enable(); } catch (e) { console.warn('mic:', e); }
+        try { await call.camera.enable();     } catch (e) { console.warn('cam:', e); }
+
+        status.textContent = '✅ Connected. The AI interviewer will speak shortly — speak normally when ready.';
+        btnJoin.style.display  = 'none';
+        btnLeave.style.display = 'inline-block';
+
+      } catch (err) {
+        status.textContent = '❌ ' + err.message;
+        console.error(err);
+        btnJoin.disabled = false;
+      }
+    });
+
+    btnLeave.addEventListener('click', async () => {
+      await call?.leave();
+      await client?.disconnectUser();
+      status.textContent = 'Left the call.';
+      btnLeave.style.display = 'none';
+      btnJoin.style.display  = 'inline-block';
+      btnJoin.disabled = false;
+    });
+  </script>
+</body>
+</html>
