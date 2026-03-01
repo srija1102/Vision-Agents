@@ -88,7 +88,7 @@ Reloading the dashboard page during a live session restores all current data ins
 - Python 3.12
 - `uv` package manager
 - A [GetStream](https://getstream.io) account (free tier works)
-- API keys: OpenRouter, Deepgram, ElevenLabs
+- API keys: OpenRouter, Deepgram
 
 ### Install
 
@@ -108,7 +108,6 @@ STREAM_API_KEY=...
 STREAM_API_SECRET=...
 OPENROUTER_API_KEY=...
 DEEPGRAM_API_KEY=...
-ELEVENLABS_API_KEY=...
 ```
 
 Optional — override which models are used:
