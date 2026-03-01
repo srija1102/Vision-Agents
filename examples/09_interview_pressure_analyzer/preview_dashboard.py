@@ -250,7 +250,7 @@ async def _replay(dashboard: _Dashboard) -> None:
 
 
 async def main() -> None:
-    dashboard = _Dashboard()
+    dashboard = _Dashboard(call_id="preview", stream_api_key="preview", stream_api_secret="preview")
     server = uvicorn.Server(uvicorn.Config(
         dashboard.app, host="0.0.0.0", port=8080, log_level="warning",
     ))

@@ -39,6 +39,7 @@ import vision_agents.plugins.deepgram as deepgram
 import vision_agents.plugins.elevenlabs as elevenlabs
 import vision_agents.plugins.getstream as getstream
 import vision_agents.plugins.openrouter as openrouter
+from vision_agents.plugins.getstream.sfu_events import ParticipantLeftEvent
 from vision_agents.core.agents import Agent
 from vision_agents.core.edge.types import User
 from vision_agents.plugins.behavioral_analyzer import (
@@ -271,7 +272,9 @@ _DASHBOARD_HTML = """\
           <div class="legend-item"><div class="legend-dot" style="background:#ffa657"></div>Aggression</div>
         </div>
       </div>
-      <canvas id="chart" height="200"></canvas>
+      <div style="position:relative;height:220px;">
+        <canvas id="chart"></canvas>
+      </div>
     </div>
   </div>
 
@@ -608,8 +611,8 @@ async def run_interview(
     comparison_engine: SessionComparisonEngine,
 ) -> Optional[SessionSummary]:
     """Run one interview session and return the session summary."""
-    analysis_model = os.environ.get("ANALYSIS_MODEL", "nousresearch/hermes-3-llama-3.1-405b:free")
-    interviewer_model = os.environ.get("INTERVIEWER_MODEL", "nousresearch/hermes-3-llama-3.1-405b:free")
+    analysis_model = os.environ.get("ANALYSIS_MODEL", "anthropic/claude-haiku-4-5")
+    interviewer_model = os.environ.get("INTERVIEWER_MODEL", "anthropic/claude-haiku-4-5")
     session_id = call_id
     logger.info(
         "Starting analyzer (analysis_model=%s, interviewer_model=%s, session=%s)",
@@ -691,9 +694,14 @@ async def run_interview(
         })
 
     captured_summary: list[SessionSummary] = []
+    _summary_sent = False
+    _stop_requested: asyncio.Event = asyncio.Event()
 
-    @agent.events.subscribe
-    async def on_session_summary(event: SessionSummaryEvent):
+    async def _send_summary_to_dashboard() -> None:
+        nonlocal _summary_sent
+        if _summary_sent:
+            return
+        _summary_sent = True
         summary = analyzer.generate_summary()
         if summary is None:
             return
@@ -739,6 +747,21 @@ async def run_interview(
             "comparison": comparison_payload,
         })
 
+    @agent.events.subscribe
+    async def on_session_summary(event: SessionSummaryEvent):
+        await _send_summary_to_dashboard()
+
+    @agent.events.subscribe
+    async def on_participant_left(event: ParticipantLeftEvent):
+        participant = event.participant
+        if participant is None or participant.user_id == "ai_interviewer":
+            return
+        if candidate_user_id and participant.user_id != candidate_user_id:
+            return
+        logger.info("Candidate left — sending early session summary")
+        await _send_summary_to_dashboard()
+        _stop_requested.set()
+
     await agent.create_user()
     call = await agent.create_call("default", call_id)
 
@@ -751,7 +774,18 @@ async def run_interview(
             "a bit about your background and what you're looking for?"
         )
 
-        await agent.finish()
+        finish_task = asyncio.create_task(agent.finish())
+        stop_task = asyncio.create_task(_stop_requested.wait())
+        done, pending = await asyncio.wait(
+            {finish_task, stop_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for t in pending:
+            t.cancel()
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
         await analyzer.stop()
 
     logger.info("Interview session ended.")
