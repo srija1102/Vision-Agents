@@ -91,6 +91,9 @@ plugins/*/example/uv.lock
 *.onnx
 profile.html
 
+# Interview analyzer runtime data
+sessions/
+
 /opencode.json
 .ralph-tui/
 .claude/

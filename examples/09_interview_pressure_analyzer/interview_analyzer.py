@@ -1334,14 +1334,15 @@ async def _main(call_id: str, candidate_user_id: Optional[str], port: int) -> No
     logger.info("Dashboard:  http://localhost:%d", port)
     logger.info("Join call:  http://localhost:%d/join", port)
 
-    # Open both tabs automatically after a brief delay
-    async def _open_browser() -> None:
-        await asyncio.sleep(2.5)
-        await asyncio.to_thread(webbrowser.open, f"http://localhost:{port}")
-        await asyncio.sleep(0.5)
-        await asyncio.to_thread(webbrowser.open, f"http://localhost:{port}/join")
+    # Open both tabs automatically on local runs only (skipped when deployed)
+    if not os.environ.get("RAILWAY_ENVIRONMENT") and not os.environ.get("NO_BROWSER"):
+        async def _open_browser() -> None:
+            await asyncio.sleep(2.5)
+            await asyncio.to_thread(webbrowser.open, f"http://localhost:{port}")
+            await asyncio.sleep(0.5)
+            await asyncio.to_thread(webbrowser.open, f"http://localhost:{port}/join")
 
-    asyncio.ensure_future(_open_browser())
+        asyncio.ensure_future(_open_browser())
 
     async def _run_interview_loop() -> None:
         nonlocal previous_summary
@@ -1364,16 +1365,26 @@ async def _main(call_id: str, candidate_user_id: Optional[str], port: int) -> No
 def main() -> None:
     load_dotenv()
     parser = argparse.ArgumentParser(description="AI Interview Pressure Analyzer")
-    parser.add_argument("--call-id", required=True, help="GetStream call ID to join")
+    parser.add_argument(
+        "--call-id",
+        default=os.environ.get("CALL_ID"),
+        help="GetStream call ID to join (or set CALL_ID env var)",
+    )
     parser.add_argument(
         "--candidate-user-id",
         default=None,
         help="user_id of the candidate (auto-detected if omitted)",
     )
     parser.add_argument(
-        "--port", type=int, default=8080, help="Dashboard port (default: 8080)"
+        "--port",
+        type=int,
+        default=int(os.environ.get("PORT", 8080)),
+        help="Dashboard port (default: 8080, or PORT env var)",
     )
     args = parser.parse_args()
+
+    if not args.call_id:
+        parser.error("--call-id is required (or set the CALL_ID environment variable)")
 
     asyncio.run(_main(args.call_id, args.candidate_user_id, args.port))
 

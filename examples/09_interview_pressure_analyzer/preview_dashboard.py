@@ -250,15 +250,16 @@ async def _replay(dashboard: _Dashboard) -> None:
 
 
 async def main() -> None:
+    port = int(os.environ.get("PORT", 8080))
     dashboard = _Dashboard(call_id="preview", stream_api_key="preview", stream_api_secret="preview")
     server = uvicorn.Server(uvicorn.Config(
-        dashboard.app, host="0.0.0.0", port=8080, log_level="warning",
+        dashboard.app, host="0.0.0.0", port=port, log_level="warning",
     ))
 
     print("=" * 60)
     print("  Interview Pressure Analyzer — Dashboard Preview")
     print("=" * 60)
-    print("  Open  http://localhost:8080  in your browser")
+    print(f"  Open  http://localhost:{port}  in your browser")
     print(f"  Replaying {N_WINDOWS} windows × {WINDOW_S}s at {INTERVAL_S}s per window")
     print("=" * 60)
 
