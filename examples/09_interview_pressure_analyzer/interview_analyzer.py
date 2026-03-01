@@ -22,8 +22,13 @@ Model selection (via env vars):
 
 import argparse
 import asyncio
+import json
 import logging
 import os
+import sqlite3
+import time
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 import webbrowser
@@ -31,7 +36,7 @@ from urllib.parse import urlencode
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse
 from getstream import Stream
 
@@ -40,6 +45,8 @@ import vision_agents.plugins.elevenlabs as elevenlabs
 import vision_agents.plugins.getstream as getstream
 import vision_agents.plugins.openrouter as openrouter
 from vision_agents.plugins.getstream.sfu_events import ParticipantLeftEvent
+from vision_agents.core.stt.events import STTTranscriptEvent
+from vision_agents.core.llm.events import LLMResponseCompletedEvent
 from vision_agents.core.agents import Agent
 from vision_agents.core.edge.types import User
 from vision_agents.plugins.behavioral_analyzer import (
@@ -224,6 +231,72 @@ _DASHBOARD_HTML = """\
   .close-btn:hover { opacity: .8; }
 
   .window-id { font-size: 11px; color: var(--muted); }
+
+  .transcript-panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px;
+  }
+  .transcript-list { max-height: 260px; overflow-y: auto; }
+  .transcript-list::-webkit-scrollbar { width: 4px; }
+  .transcript-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .transcript-entry {
+    display: flex; gap: 10px; padding: 8px 0;
+    border-bottom: 1px solid var(--border); font-size: 13px;
+    animation: slide-in .25s ease;
+  }
+  .transcript-entry:last-child { border-bottom: none; }
+  .t-speaker {
+    font-size: 10px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
+    white-space: nowrap; min-width: 76px; padding-top: 2px;
+  }
+  .t-speaker.candidate { color: var(--blue); }
+  .t-speaker.interviewer { color: var(--purple); }
+  .t-text { color: var(--text); line-height: 1.5; flex: 1; }
+  .t-time { color: var(--muted); font-size: 10px; white-space: nowrap; padding-top: 2px; }
+  .no-transcript { color: var(--muted); font-size: 12px; font-style: italic; }
+
+  #ended-banner {
+    display: none; background: #161b22; border-bottom: 1px solid var(--border);
+    padding: 10px 24px; text-align: center; font-size: 13px; color: var(--muted);
+    position: sticky; top: 53px; z-index: 9;
+  }
+  #ended-banner.show { display: block; }
+
+  .history-btn {
+    background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    border-radius: 8px; padding: 5px 14px; font-size: 12px; cursor: pointer;
+    transition: border-color .2s;
+  }
+  .history-btn:hover { border-color: var(--blue); }
+
+  #sessions-modal {
+    display: none; position: fixed; inset: 0; background: rgba(13,17,23,.92);
+    z-index: 200; align-items: center; justify-content: center;
+  }
+  #sessions-modal.show { display: flex; }
+  .sessions-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 28px; width: 620px; max-height: 80vh;
+    display: flex; flex-direction: column; animation: pop-in .25s ease;
+  }
+  .sessions-card h2 { font-size: 17px; margin-bottom: 18px; }
+  .sessions-list { flex: 1; overflow-y: auto; }
+  .sessions-list::-webkit-scrollbar { width: 4px; }
+  .sessions-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .session-row {
+    display: flex; align-items: center; gap: 12px; padding: 10px 0;
+    border-bottom: 1px solid var(--border); font-size: 13px;
+  }
+  .session-row:last-child { border-bottom: none; }
+  .session-id-col { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .session-meta { color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .session-stress { font-size: 11px; padding: 2px 8px; border-radius: 20px; background: var(--bg); white-space: nowrap; }
+  .load-btn {
+    background: var(--blue); color: white; border: none; border-radius: 6px;
+    padding: 4px 12px; font-size: 12px; cursor: pointer; white-space: nowrap;
+  }
+  .load-btn:hover { opacity: .85; }
+  .no-sessions { color: var(--muted); font-size: 13px; font-style: italic; padding: 16px 0; }
 </style>
 </head>
 <body>
@@ -231,11 +304,27 @@ _DASHBOARD_HTML = """\
 <header>
   <h1>🎙 <span>Interview</span> Pressure Analyzer</h1>
   <span class="session-badge" id="session-label">No session</span>
-  <div class="status-dot">
-    <div class="dot connecting" id="dot"></div>
-    <span id="status-text">Connecting…</span>
+  <div style="display:flex;align-items:center;gap:12px;">
+    <button class="history-btn" onclick="openSessions()">📁 History</button>
+    <div class="status-dot">
+      <div class="dot connecting" id="dot"></div>
+      <span id="status-text">Connecting…</span>
+    </div>
   </div>
 </header>
+
+<!-- Sessions History Modal -->
+<div id="sessions-modal">
+  <div class="sessions-card">
+    <h2>📁 Session History</h2>
+    <div class="sessions-list" id="sessions-list"><div class="no-sessions">Loading…</div></div>
+    <button class="close-btn" style="margin-top:16px" onclick="closeSessions()">Close</button>
+  </div>
+</div>
+
+<div id="ended-banner">
+  Session ended — review your performance below &nbsp;·&nbsp; Ctrl-C in terminal to quit
+</div>
 
 <div style="padding: 16px 24px 0">
   <div class="cards">
@@ -309,6 +398,15 @@ _DASHBOARD_HTML = """\
   </div>
 </div>
 
+<div style="padding: 0 24px 24px">
+  <div class="transcript-panel">
+    <div class="panel-title">💬 Conversation Transcript</div>
+    <div class="transcript-list" id="transcript-list">
+      <div class="no-transcript">Transcript will appear here when the session starts…</div>
+    </div>
+  </div>
+</div>
+
 <!-- Session Summary Overlay -->
 <div id="summary-overlay">
   <div class="summary-card">
@@ -329,6 +427,7 @@ _DASHBOARD_HTML = """\
 const MAX_POINTS = 30;
 const labels = [], stressData = [], aggData = [];
 let spikeCount = 0;
+let sessionEnded = false;
 
 // Chart setup
 const ctx = document.getElementById('chart').getContext('2d');
@@ -383,6 +482,11 @@ function connect() {
     document.getElementById('status-text').textContent = 'Live';
   };
   ws.onclose = () => {
+    if (sessionEnded) {
+      document.getElementById('dot').className = 'dot';
+      document.getElementById('status-text').textContent = 'Session Ended';
+      return;
+    }
     document.getElementById('dot').className = 'dot connecting';
     document.getElementById('status-text').textContent = 'Reconnecting…';
     setTimeout(connect, 2000);
@@ -393,8 +497,14 @@ function connect() {
     if (msg.type === 'analysis') onAnalysis(msg);
     else if (msg.type === 'spike') onSpike(msg);
     else if (msg.type === 'summary') onSummary(msg);
+    else if (msg.type === 'transcript') onTranscript(msg);
     else if (msg.type === 'session_start') {
       document.getElementById('session-label').textContent = 'Session: ' + msg.session_id;
+    } else if (msg.type === 'session_ended') {
+      sessionEnded = true;
+      document.getElementById('ended-banner').classList.add('show');
+      document.getElementById('dot').className = 'dot';
+      document.getElementById('status-text').textContent = 'Session Ended';
     }
   };
 }
@@ -460,6 +570,22 @@ function onSpike(e) {
   list.insertBefore(li, list.firstChild);
 }
 
+function onTranscript(e) {
+  const list = document.getElementById('transcript-list');
+  const placeholder = list.querySelector('.no-transcript');
+  if (placeholder) placeholder.remove();
+  const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const label = e.speaker === 'candidate' ? '🎤 You' : '🤖 AI';
+  const div = document.createElement('div');
+  div.className = 'transcript-entry';
+  div.innerHTML = `
+    <span class="t-speaker ${e.speaker}">${label}</span>
+    <span class="t-text">${e.text}</span>
+    <span class="t-time">${now}</span>`;
+  list.appendChild(div);
+  list.scrollTop = list.scrollHeight;
+}
+
 function onSummary(e) {
   const s = e.summary;
   document.getElementById('sum-session-id').textContent = s.session_id + ' · ' + s.duration_s + 's';
@@ -504,11 +630,304 @@ function closeSummary() {
   document.getElementById('summary-overlay').classList.remove('show');
 }
 
+// ── Sessions history ──────────────────────────────────────────────────────
+
+async function openSessions() {
+  document.getElementById('sessions-modal').classList.add('show');
+  const list = document.getElementById('sessions-list');
+  list.innerHTML = '<div class="no-sessions">Loading…</div>';
+  try {
+    const sessions = await fetch('/api/sessions').then(r => r.json());
+    if (!sessions.length) {
+      list.innerHTML = '<div class="no-sessions">No sessions recorded yet.</div>';
+      return;
+    }
+    list.innerHTML = sessions.map(s => {
+      const date = s.started_at ? new Date(s.started_at).toLocaleString() : '—';
+      const dur  = s.duration_s  ? Math.round(s.duration_s) + 's' : '—';
+      const stress = s.peak_stress != null ? (s.peak_stress * 100).toFixed(0) + '% stress' : '—';
+      const style  = (s.dominant_agg_class || 'neutral').replace('_', ' ');
+      return `<div class="session-row">
+        <span class="session-id-col" title="${s.session_id}">${s.session_id}</span>
+        <span class="session-meta">${date}</span>
+        <span class="session-meta">${dur}</span>
+        <span class="session-stress">${stress} · ${style}</span>
+        <button class="load-btn" onclick="loadSession('${s.session_id}')">Load →</button>
+      </div>`;
+    }).join('');
+  } catch {
+    list.innerHTML = '<div class="no-sessions">Failed to load sessions.</div>';
+  }
+}
+
+function closeSessions() {
+  document.getElementById('sessions-modal').classList.remove('show');
+}
+
+function resetDashboard() {
+  labels.length = 0; stressData.length = 0; aggData.length = 0;
+  chart.update();
+  document.getElementById('transcript-list').innerHTML =
+    '<div class="no-transcript">Transcript will appear here when the session starts…</div>';
+  document.getElementById('spike-list').innerHTML =
+    '<li class="no-spikes">No spikes detected yet</li>';
+  document.getElementById('summary-overlay').classList.remove('show');
+  spikeCount = 0;
+}
+
+async function loadSession(sessionId) {
+  closeSessions();
+  resetDashboard();
+  try {
+    const data = await fetch(`/api/sessions/${sessionId}`).then(r => r.json());
+    document.getElementById('session-label').textContent = 'Session: ' + sessionId;
+
+    for (const w of (data.windows || [])) {
+      onAnalysis({
+        window_id: w.window_id,
+        candidate_stress: w.stress,
+        stress_confidence: w.stress_conf,
+        interviewer_aggression: w.aggression,
+        aggression_confidence: w.agg_conf,
+        risk_flag: w.risk,
+        pressure_trend: w.trend,
+        dominant_party: w.dominant,
+        imbalance_score: w.imbalance,
+        coaching_feedback: w.coaching,
+        aggression_class: w.agg_class,
+        resilience_score: w.resilience,
+      });
+    }
+
+    for (const s of (data.spikes || [])) {
+      onSpike({ window_id: s.window_id, stress_before: s.stress_before,
+                stress_after: s.stress_after, delta_sigma: s.delta_sigma, cause: s.cause });
+    }
+
+    for (const t of (data.transcript || [])) {
+      onTranscript({ speaker: t.speaker, text: t.text });
+    }
+
+    if (data.summary) {
+      const s = data.summary;
+      onSummary({
+        summary: {
+          session_id: sessionId,
+          duration_s: (data.session || {}).duration_s || 0,
+          peak_stress: s.peak_stress,
+          average_stress: s.average_stress,
+          resilience_score: s.resilience_score,
+          spike_count: s.spike_count,
+          filler_word_density_per_min: s.filler_density,
+          dominant_aggression_class: s.dominant_agg_class,
+          dominant_party_summary: s.dominant_party,
+          strengths: JSON.parse(s.strengths || '[]'),
+          improvement_areas: JSON.parse(s.improvement_areas || '[]'),
+        },
+        comparison: null,
+      });
+    }
+  } catch (err) {
+    alert('Failed to load session: ' + err.message);
+  }
+}
+
 connect();
 </script>
 </body>
 </html>
 """
+
+
+# ---------------------------------------------------------------------------
+# SQLite session database
+# ---------------------------------------------------------------------------
+
+_DB_PATH = Path("sessions/interviews.db")
+
+
+class SessionDB:
+    """Persistent SQLite store for all session data."""
+
+    def __init__(self) -> None:
+        _DB_PATH.parent.mkdir(exist_ok=True)
+        self._path = str(_DB_PATH)
+        self._init_schema()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_schema(self) -> None:
+        with self._connect() as conn:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    session_id TEXT PRIMARY KEY,
+                    call_id    TEXT,
+                    started_at TEXT,
+                    ended_at   TEXT,
+                    duration_s REAL
+                );
+                CREATE TABLE IF NOT EXISTS windows (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id  TEXT,
+                    window_id   TEXT,
+                    t           REAL,
+                    stress      REAL,
+                    stress_conf REAL,
+                    aggression  REAL,
+                    agg_conf    REAL,
+                    risk        TEXT,
+                    trend       TEXT,
+                    dominant    TEXT,
+                    imbalance   REAL,
+                    coaching    TEXT,
+                    agg_class   TEXT,
+                    resilience  REAL
+                );
+                CREATE TABLE IF NOT EXISTS spikes (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id   TEXT,
+                    window_id    TEXT,
+                    t            REAL,
+                    stress_before REAL,
+                    stress_after  REAL,
+                    delta_sigma  REAL,
+                    cause        TEXT
+                );
+                CREATE TABLE IF NOT EXISTS transcripts (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT,
+                    speaker    TEXT,
+                    text       TEXT,
+                    t          REAL
+                );
+                CREATE TABLE IF NOT EXISTS summaries (
+                    session_id        TEXT PRIMARY KEY,
+                    peak_stress       REAL,
+                    average_stress    REAL,
+                    resilience_score  REAL,
+                    spike_count       INTEGER,
+                    filler_density    REAL,
+                    dominant_agg_class TEXT,
+                    dominant_party    TEXT,
+                    strengths         TEXT,
+                    improvement_areas TEXT
+                );
+            """)
+
+    def upsert_session(self, session_id: str, call_id: str, started_at: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO sessions (session_id, call_id, started_at) VALUES (?,?,?)",
+                (session_id, call_id, started_at),
+            )
+
+    def update_session_end(self, session_id: str, ended_at: str, duration_s: float) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE sessions SET ended_at=?, duration_s=? WHERE session_id=?",
+                (ended_at, duration_s, session_id),
+            )
+
+    def insert_window(self, session_id: str, msg: dict) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO windows
+                   (session_id,window_id,t,stress,stress_conf,aggression,agg_conf,
+                    risk,trend,dominant,imbalance,coaching,agg_class,resilience)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    session_id, msg.get("window_id"), time.time(),
+                    msg.get("candidate_stress"), msg.get("stress_confidence"),
+                    msg.get("interviewer_aggression"), msg.get("aggression_confidence"),
+                    msg.get("risk_flag"), msg.get("pressure_trend"),
+                    msg.get("dominant_party"), msg.get("imbalance_score"),
+                    msg.get("coaching_feedback"), msg.get("aggression_class"),
+                    msg.get("resilience_score"),
+                ),
+            )
+
+    def insert_spike(self, session_id: str, msg: dict) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO spikes
+                   (session_id,window_id,t,stress_before,stress_after,delta_sigma,cause)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (
+                    session_id, msg.get("window_id"), time.time(),
+                    msg.get("stress_before"), msg.get("stress_after"),
+                    msg.get("delta_sigma"), msg.get("cause"),
+                ),
+            )
+
+    def insert_transcript(self, session_id: str, msg: dict) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO transcripts (session_id,speaker,text,t) VALUES (?,?,?,?)",
+                (session_id, msg.get("speaker"), msg.get("text"), time.time()),
+            )
+
+    def upsert_summary(self, session_id: str, s: dict, duration_s: float) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO summaries
+                   (session_id,peak_stress,average_stress,resilience_score,spike_count,
+                    filler_density,dominant_agg_class,dominant_party,strengths,improvement_areas)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    session_id,
+                    s.get("peak_stress"), s.get("average_stress"),
+                    s.get("resilience_score"), s.get("spike_count"),
+                    s.get("filler_word_density_per_min"),
+                    s.get("dominant_aggression_class"), s.get("dominant_party_summary"),
+                    json.dumps(s.get("strengths") or []),
+                    json.dumps(s.get("improvement_areas") or []),
+                ),
+            )
+            conn.execute(
+                "UPDATE sessions SET duration_s=?, ended_at=? WHERE session_id=?",
+                (duration_s, datetime.now(timezone.utc).isoformat(), session_id),
+            )
+
+    def list_sessions(self) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT s.session_id, s.call_id, s.started_at, s.ended_at, s.duration_s,
+                          sm.peak_stress, sm.dominant_agg_class
+                   FROM sessions s
+                   LEFT JOIN summaries sm ON s.session_id = sm.session_id
+                   ORDER BY s.started_at DESC"""
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_session(self, session_id: str) -> dict | None:
+        with self._connect() as conn:
+            sess = conn.execute(
+                "SELECT * FROM sessions WHERE session_id=?", (session_id,)
+            ).fetchone()
+            if not sess:
+                return None
+            windows = conn.execute(
+                "SELECT * FROM windows WHERE session_id=? ORDER BY t", (session_id,)
+            ).fetchall()
+            spikes = conn.execute(
+                "SELECT * FROM spikes WHERE session_id=? ORDER BY t", (session_id,)
+            ).fetchall()
+            transcript = conn.execute(
+                "SELECT * FROM transcripts WHERE session_id=? ORDER BY t", (session_id,)
+            ).fetchall()
+            summary = conn.execute(
+                "SELECT * FROM summaries WHERE session_id=?", (session_id,)
+            ).fetchone()
+        return {
+            "session": dict(sess),
+            "windows": [dict(r) for r in windows],
+            "spikes": [dict(r) for r in spikes],
+            "transcript": [dict(r) for r in transcript],
+            "summary": dict(summary) if summary else None,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -522,6 +941,9 @@ class _Dashboard:
         self._clients: set[WebSocket] = set()
         self._call_id = call_id
         self._stream_client = Stream(api_key=stream_api_key, api_secret=stream_api_secret)
+        self._buffer: list[dict] = []
+        self._current_session_id: str = ""
+        self._db = SessionDB()
         self.app = FastAPI(title="Interview Pressure Analyzer")
         self._register_routes()
 
@@ -544,9 +966,25 @@ class _Dashboard:
             url = f"https://getstream.io/video/demos/join/{self._call_id}?{urlencode(params)}"
             return RedirectResponse(url)
 
+        @self.app.get("/api/sessions")
+        async def api_sessions() -> list:
+            return await asyncio.to_thread(self._db.list_sessions)
+
+        @self.app.get("/api/sessions/{session_id}")
+        async def api_session(session_id: str) -> dict:
+            data = await asyncio.to_thread(self._db.get_session, session_id)
+            if data is None:
+                raise HTTPException(status_code=404, detail="Session not found")
+            return data
+
         @self.app.websocket("/ws")
         async def ws_endpoint(websocket: WebSocket) -> None:
             await websocket.accept()
+            for msg in list(self._buffer):
+                try:
+                    await websocket.send_json(msg)
+                except (RuntimeError, WebSocketDisconnect):
+                    return
             self._clients.add(websocket)
             logger.info("Dashboard client connected (%d total)", len(self._clients))
             try:
@@ -557,6 +995,34 @@ class _Dashboard:
                 logger.info("Dashboard client disconnected (%d total)", len(self._clients))
 
     async def broadcast(self, payload: dict) -> None:
+        msg_type = payload.get("type")
+        if msg_type == "session_start":
+            self._buffer = [payload]
+            self._current_session_id = payload.get("session_id", "")
+            await asyncio.to_thread(
+                self._db.upsert_session,
+                self._current_session_id,
+                self._call_id,
+                datetime.now(timezone.utc).isoformat(),
+            )
+        else:
+            self._buffer.append(payload)
+
+        sid = self._current_session_id
+        if sid:
+            if msg_type == "analysis":
+                await asyncio.to_thread(self._db.insert_window, sid, payload)
+            elif msg_type == "spike":
+                await asyncio.to_thread(self._db.insert_spike, sid, payload)
+            elif msg_type == "transcript":
+                await asyncio.to_thread(self._db.insert_transcript, sid, payload)
+            elif msg_type == "summary":
+                await asyncio.to_thread(
+                    self._db.upsert_summary, sid,
+                    payload.get("summary", {}),
+                    payload.get("summary", {}).get("duration_s", 0),
+                )
+
         dead: set[WebSocket] = set()
         for ws in self._clients:
             try:
@@ -597,6 +1063,41 @@ def _format_spike(event: SpikeDetectedEvent) -> str:
         f"{event.stress_before:.2f} → {event.stress_after:.2f}  "
         f"window={event.window_id}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Session persistence
+# ---------------------------------------------------------------------------
+
+def _save_session(
+    session_id: str,
+    summary: SessionSummary,
+    transcript: list[dict],
+    start_time: float,
+) -> None:
+    sessions_dir = Path("sessions")
+    sessions_dir.mkdir(exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    path = sessions_dir / f"{session_id}_{ts}.json"
+    data = {
+        "session_id": session_id,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "duration_s": summary.duration_s,
+        "summary": {
+            "peak_stress": summary.peak_stress,
+            "average_stress": summary.average_stress,
+            "resilience_score": summary.resilience_score,
+            "spike_count": summary.spike_count,
+            "filler_word_density_per_min": summary.filler_word_density_per_min,
+            "dominant_aggression_class": summary.dominant_aggression_class,
+            "dominant_party_summary": summary.dominant_party_summary,
+            "strengths": summary.strengths,
+            "improvement_areas": summary.improvement_areas,
+        },
+        "transcript": transcript,
+    }
+    path.write_text(json.dumps(data, indent=2))
+    logger.info("Session saved → %s", path)
 
 
 # ---------------------------------------------------------------------------
@@ -694,6 +1195,8 @@ async def run_interview(
         })
 
     captured_summary: list[SessionSummary] = []
+    transcript_log: list[dict] = []
+    session_start_time = time.time()
     _summary_sent = False
     _stop_requested: asyncio.Event = asyncio.Event()
 
@@ -746,6 +1249,7 @@ async def run_interview(
             },
             "comparison": comparison_payload,
         })
+        _save_session(session_id, summary, transcript_log, session_start_time)
 
     @agent.events.subscribe
     async def on_session_summary(event: SessionSummaryEvent):
@@ -761,6 +1265,20 @@ async def run_interview(
         logger.info("Candidate left — sending early session summary")
         await _send_summary_to_dashboard()
         _stop_requested.set()
+
+    @agent.events.subscribe
+    async def on_candidate_transcript(event: STTTranscriptEvent):
+        entry = {"speaker": "candidate", "text": event.text, "t": round(time.time() - session_start_time, 1)}
+        transcript_log.append(entry)
+        await dashboard.broadcast({"type": "transcript", "speaker": "candidate", "text": event.text})
+
+    @agent.events.subscribe
+    async def on_interviewer_response(event: LLMResponseCompletedEvent):
+        if not event.text:
+            return
+        entry = {"speaker": "interviewer", "text": event.text, "t": round(time.time() - session_start_time, 1)}
+        transcript_log.append(entry)
+        await dashboard.broadcast({"type": "transcript", "speaker": "interviewer", "text": event.text})
 
     await agent.create_user()
     call = await agent.create_call("default", call_id)
@@ -832,7 +1350,10 @@ async def _main(call_id: str, candidate_user_id: Optional[str], port: int) -> No
         )
         if summary is not None:
             previous_summary = summary
-        server.should_exit = True
+        await dashboard.broadcast({"type": "session_ended"})
+        logger.info(
+            "Session complete — dashboard open at http://localhost:%d  (Ctrl-C to quit)", port
+        )
 
     await asyncio.gather(
         server.serve(),

@@ -1,0 +1,28 @@
+{
+  "session_id": "hackathon-interview-005",
+  "recorded_at": "2026-03-01T06:48:31.788993+00:00",
+  "duration_s": 15.0,
+  "summary": {
+    "peak_stress": 0.009,
+    "average_stress": 0.0027,
+    "resilience_score": 1.0,
+    "spike_count": 0,
+    "filler_word_density_per_min": 0.0,
+    "dominant_aggression_class": "neutral",
+    "dominant_party_summary": "balanced",
+    "strengths": [
+      "Maintained composure throughout the session",
+      "Recovered quickly after high-pressure moments",
+      "Minimal filler words \u2014 clear and direct articulation",
+      "No extreme stress peaks detected"
+    ],
+    "improvement_areas": []
+  },
+  "transcript": [
+    {
+      "speaker": "interviewer",
+      "text": "Great! Let me set the stage.\n\nI'm conducting this interview to assess your technical depth, problem-solving approach, and communication skills. We'll likely cover:\n\n- **System design & architecture**\n- **Data structures & algorithms**\n- **Code quality & best practices**\n- **Real-world problem solving**\n\nBefore we dive in, I'd like to hear from **you**:\n\n1. **What's your background?** (years of experience, primary tech stack, recent roles)\n2. **What type of role are you targeting?** (backend, full-stack, infrastructure, etc.)\n3. **Any particular areas you'd like to focus on\u2014or avoid?**\n\nThis helps me tailor questions to be relevant and challenging for your level.",
+      "t": 7.2
+    }
+  ]
+}

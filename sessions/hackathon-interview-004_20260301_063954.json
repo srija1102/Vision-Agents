@@ -1,0 +1,58 @@
+{
+  "session_id": "hackathon-interview-004",
+  "recorded_at": "2026-03-01T06:39:54.874858+00:00",
+  "duration_s": 103.1,
+  "summary": {
+    "peak_stress": 0.047,
+    "average_stress": 0.0028,
+    "resilience_score": 0.9686,
+    "spike_count": 1,
+    "filler_word_density_per_min": 0.58,
+    "dominant_aggression_class": "neutral",
+    "dominant_party_summary": "balanced",
+    "strengths": [
+      "Maintained composure throughout the session",
+      "Recovered quickly after high-pressure moments",
+      "Minimal filler words \u2014 clear and direct articulation",
+      "No extreme stress peaks detected"
+    ],
+    "improvement_areas": []
+  },
+  "transcript": [
+    {
+      "speaker": "interviewer",
+      "text": "Great! Let me set the stage for our conversation.\n\nI'm conducting this interview to assess your technical depth, problem-solving approach, and communication skills. We'll likely cover:\n\n- **System design & architecture**\n- **Data structures & algorithms**\n- **Code quality & best practices**\n- **Real-world problem solving**\n\nBefore we dive in, I'd like to hear from **you**:\n\n1. **What's your background?** (years of experience, primary tech stack, recent roles)\n2. **What type of role are you targeting?** (backend, full-stack, infrastructure, etc.)\n3. **Any particular areas you'd like to focus on\u2014or avoid?**\n\nThis helps me tailor questions to be relevant and challenging for your level.",
+      "t": 6.4
+    },
+    {
+      "speaker": "candidate",
+      "text": "Got it.",
+      "t": 29.5
+    },
+    {
+      "speaker": "interviewer",
+      "text": "I appreciate the acknowledgment, but I need a bit more info to make this interview valuable for you! \n\nCould you share:\n\n1. **Your experience level?** (e.g., \"3 years as a backend engineer,\" \"recent bootcamp grad,\" etc.)\n2. **What you primarily work with?** (languages, frameworks, databases, etc.)\n3. **The role you're interviewing for?** (or the type of work you want to focus on)\n\nOnce I understand where you're coming from, I can ask questions that are appropriately challenging and relevant to your goals.",
+      "t": 29.8
+    },
+    {
+      "speaker": "candidate",
+      "text": "Yeah.",
+      "t": 61.1
+    },
+    {
+      "speaker": "interviewer",
+      "text": "I sense you might be ready to move forward, but I genuinely need those details to conduct a useful interview for you.\n\nLet me make it simpler\u2014just give me **one or two sentences**:\n\n- **How many years have you been coding, and in what?**\n- **What role are you preparing for?**\n\nFor example: *\"I'm a 2-year backend engineer working mostly with Python and PostgreSQL, interviewing for a senior role at a fintech startup.\"*\n\nThat's all I need to get started with relevant questions. What's your situation?",
+      "t": 63.3
+    },
+    {
+      "speaker": "candidate",
+      "text": "So I'm a cloud engineer with an experience of one year, and I have experience with AWS Kubernetes, Prometheus, Grafana, and I worked across multiple cloud platforms. And I've been working on deploying and scaling the microservices which were deployed in Kubernetes services. And I was also responsible for the monitoring of the microservices using Prometheus and Grafana, and I also have experience with data structures and algorithms in my coursework.",
+      "t": 92.4
+    },
+    {
+      "speaker": "interviewer",
+      "text": "Excellent! That's really helpful. You've got a solid foundation in cloud infrastructure and observability\u2014that's valuable.\n\nA couple of clarifying questions before we dive in:\n\n1. **What's your target role?** Are you looking to deepen your cloud/DevOps expertise, move into a platform engineering role, or pivot toward backend/SRE work?\n\n2. **Which cloud platforms** have you worked with beyond AWS? (GCP, Azure, etc.?)\n\n3. **On the Kubernetes side**\u2014have you dealt with things like resource management, networking policies, or troubleshooting cluster issues? Or mostly deployment workflows?\n\nOnce I understand your direction, I'll start with questions that challenge you appropriately. Given your 1-year experience, I'll aim for **intermediate-level** questions that push your thinking without being unfair.\n\nReady when you are!",
+      "t": 95.3
+    }
+  ]
+}
