@@ -62,6 +62,8 @@ class OpenRouterLLM(OpenAILLM):
         """
         if api_key is None:
             api_key = os.environ.get("OPENROUTER_API_KEY")
+        self._max_tokens: Optional[int] = kwargs.pop("max_tokens", None)
+        self._temperature: Optional[float] = kwargs.pop("temperature", None)
         super().__init__(
             api_key=api_key,
             base_url=base_url,
@@ -244,6 +246,10 @@ class OpenRouterLLM(OpenAILLM):
             "model": effective_model,
             "stream": stream,
         }
+        if self._max_tokens is not None:
+            request_kwargs["max_tokens"] = self._max_tokens
+        if self._temperature is not None:
+            request_kwargs["temperature"] = self._temperature
         if tools:
             request_kwargs["tools"] = tools
             # openrouter/auto may route to models that don't support tools.
