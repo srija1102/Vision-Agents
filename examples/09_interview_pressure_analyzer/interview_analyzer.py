@@ -1150,7 +1150,7 @@ async def run_interview(
         instructions=INTERVIEWER_INSTRUCTIONS,
         llm=interviewer_llm,
         stt=deepgram.STT(eager_turn_detection=True),
-        tts=elevenlabs.TTS(model_id="eleven_flash_v2_5"),
+        tts=deepgram.TTS(),
         processors=processors,
     )
 
